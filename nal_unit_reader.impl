@@ -1,0 +1,147 @@
+#ifndef __NAL_UNIT_READER_IMPL_H__
+#define __NAL_UNIT_READER_IMPL_H__
+
+#include "nal_unit_reader.h"
+
+#include <stdexcept>
+#include <algorithm>
+
+template< typename iterator >
+nal_unit< iterator >::nal_unit( iterator data, iterator_diff size ) noexcept :
+    m_data( data ),
+    m_size( size ){}
+
+template< typename iterator >
+nal_unit< iterator >::nal_unit( const nal_unit& o ) noexcept :
+    m_data( o.m_data ),
+    m_size( o.m_size ){}
+
+template< typename iterator >
+nal_unit< iterator >::nal_unit( nal_unit&& o ) noexcept :
+    m_data( o.m_data ),
+    m_size( o.m_size )
+{
+    o.m_size = 0;
+}
+
+template< typename iterator >
+auto nal_unit< iterator >::operator=( const nal_unit& o ) noexcept -> nal_unit&
+{
+    m_data = o.m_data;
+    m_size = o.m_size;
+    return *this;
+}
+
+template< typename iterator >
+auto nal_unit< iterator >::operator=( nal_unit&& o ) noexcept -> nal_unit&
+{
+    m_data = o.m_data;
+    m_size = o.m_size;
+    o.m_size = 0;
+    return *this;
+}
+
+template< typename iterator >
+nal_unit_reader< iterator >::nal_unit_reader( iterator data_begin, iterator data_end )
+{
+    set_data( data_begin, data_end );
+}
+
+template< typename iterator >
+nal_unit_reader< iterator >::nal_unit_reader( const nal_unit_reader& o ) noexcept :
+    m_initialized( o.m_initialized ),
+    m_next_nal_unit( o.m_next_nal_unit ),
+    m_end( o.m_end ){}
+
+template< typename iterator >
+nal_unit_reader< iterator >::nal_unit_reader( nal_unit_reader&& o ) noexcept :
+    m_initialized( o.m_initialized ),
+    m_next_nal_unit( o.m_next_nal_unit ),
+    m_end( o.m_end )
+{
+    o.m_initialized = false;
+}
+
+template< typename iterator >
+auto nal_unit_reader< iterator >::operator=( const nal_unit_reader& o ) noexcept -> nal_unit_reader&
+{
+    m_initialized = o.m_initialized;
+    m_next_nal_unit = o.m_next_nal_unit;
+    m_end = o.m_end;
+    return *this;
+}
+
+template< typename iterator >
+auto nal_unit_reader< iterator >::operator=( nal_unit_reader&& o ) noexcept -> nal_unit_reader&
+{
+    m_initialized = o.m_initialized;
+    m_next_nal_unit = o.m_next_nal_unit;
+    m_end = o.m_end;
+    o.m_initialized = false;
+    return *this;
+}
+
+template< typename iterator >
+void nal_unit_reader< iterator >::set_data( iterator data_begin, iterator data_end )
+{
+    if( std::distance( data_begin, data_end ) < 0 )
+    {
+        throw std::invalid_argument{ "End iter should be bigger than or equal to the begin one" };
+    }
+
+    m_end = data_end;
+    m_next_nal_unit = data_begin;
+
+    auto next_code_data = next_start_code_pos_len( data_begin, data_end );
+    m_next_nal_unit = next_code_data.first + next_code_data.second;
+
+    m_initialized = true;
+}
+
+template< typename iterator >
+nal_unit< iterator > nal_unit_reader< iterator >::get_next()
+{
+    if( !depleted() )
+    {
+        auto next_code = next_start_code_pos_len( m_next_nal_unit, m_end );
+
+        iterator_diff curr_unit_len{ std::distance( m_next_nal_unit, next_code.first ) };
+        iterator curr_unit{ m_next_nal_unit };
+        std::advance( m_next_nal_unit, curr_unit_len + next_code.second );
+
+        return { curr_unit, curr_unit_len };
+    }
+
+    throw std::out_of_range{ "No nal units to read" };
+}
+template< typename iterator >
+auto nal_unit_reader< iterator >::next_start_code_pos_len( iterator begin, iterator end ) const ->
+std::pair< iterator, iterator_diff >
+{
+    std::pair< iterator, iterator_diff > result{ end, 0 };
+
+    static const std::array< uint8_t, 3 > start_code_3{ 0x00, 0x00, 0x01 };
+    static const std::array< uint8_t, 4 > start_code_4{ 0x00, 0x00, 0x00, 0x01 };
+
+    iterator_diff remaining_len{ std::distance( begin, end ) };
+    if( remaining_len > start_code_3.size() )
+    {
+        iterator next_3{ std::search( begin, end, start_code_3.begin(), start_code_3.end() ) };
+        result.first = next_3;
+        result.second = start_code_3.size();
+
+        if( remaining_len > start_code_4.size() )
+        {
+            iterator next_4{ std::search( begin, end, start_code_4.begin(), start_code_4.end() ) };
+            if( next_4 < next_3 )
+            {
+                result.first = next_4;
+                result.second = start_code_4.size();
+            }
+        }
+    }
+
+    return result;
+}
+
+#endif
